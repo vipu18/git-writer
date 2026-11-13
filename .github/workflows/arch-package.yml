@@ -1,0 +1,59 @@
+name: Build Git Writer Arch Linux Packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '[0-9]*'
+      - 'v[0-9]*'
+    branches:
+      - master
+    paths:
+      - '.github/workflows/arch-package.yml'
+      - 'tools/arch-package.sh'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: git-writer-arch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  arch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build in Arch Linux
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" -w /src \
+            archlinux:latest bash tools/arch-package.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: git-writer-arch-zst
+          path: dist/*.zst
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Publish to fork's GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.zst --clobber
+          else
+            gh release create "$TAG" dist/*.zst \
+              --target "$GITHUB_SHA" \
+              --title "Git Writer $TAG" \
+              --generate-notes --latest
+          fi
